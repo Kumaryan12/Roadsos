@@ -11,7 +11,10 @@ function SOSCard({ sosCase, onStatusUpdate, onConfirmVictimMatch }) {
 
   const isBystanderReport = sosCase.triggerType === "BYSTANDER_REPORT";
   const isManualVictimSos = sosCase.triggerType === "MANUAL_VICTIM_SOS";
+  const isAutoCrashCase =
 
+   sosCase.triggerType === "AUTO_ESCALATION" ||
+   sosCase.triggerType === "CRITICAL_MANUAL_SOS";
   const getSeverityClass = () => {
     if (sosCase.severity === "Critical") return "critical";
     if (sosCase.severity === "Moderate") return "moderate";
@@ -19,21 +22,24 @@ function SOSCard({ sosCase, onStatusUpdate, onConfirmVictimMatch }) {
   };
 
   const getTriggerLabel = () => {
-    if (sosCase.triggerType === "MANUAL_VICTIM_SOS") {
-      return "Manual Victim SOS";
-    }
+  if (sosCase.triggerType === "MANUAL_VICTIM_SOS") {
+    return "Manual Victim SOS";
+  }
 
-    if (sosCase.triggerType === "BYSTANDER_REPORT") {
-      return "Bystander Report";
-    }
+  if (sosCase.triggerType === "BYSTANDER_REPORT") {
+    return "Bystander Report";
+  }
 
-    if (sosCase.triggerType === "AUTO_ESCALATION") {
-      return "Auto Escalation";
-    }
+  if (sosCase.triggerType === "CRITICAL_MANUAL_SOS") {
+    return "Crash Detected: Victim Confirmed Help";
+  }
 
-    return sosCase.triggerType || "Unknown Trigger";
-  };
+  if (sosCase.triggerType === "AUTO_ESCALATION") {
+    return "Auto Escalation: No Victim Response";
+  }
 
+  return sosCase.triggerType || "Unknown Trigger";
+};
   const getReporterTypeLabel = () => {
     if (sosCase.reporterType === "REGISTERED_ROADSOS_USER") {
       return "Registered RoadSoS User";
@@ -273,7 +279,7 @@ const getMatchClass = (score) => {
   };
 
   const renderVictimProfile = () => {
-    if (isManualVictimSos && sosCase.user) {
+    if ((isManualVictimSos || isAutoCrashCase) && sosCase.user) {
       return (
         <div className="victim-profile-box">
           <h3>Known Victim Profile</h3>
@@ -444,6 +450,68 @@ const getMatchClass = (score) => {
           <strong>{sosCase.sosSource || "Not available"}</strong>
         </div>
       </div>
+
+      {isAutoCrashCase && (
+  <div className="auto-crash-box">
+    <div className="auto-crash-header">
+      <div>
+        <h3>Auto Crash Detection Details</h3>
+        <p>
+          This case was generated from RoadSoS crash-detection logic and should
+          be treated as a high-priority emergency.
+        </p>
+      </div>
+
+      <span className="auto-crash-priority">HIGH PRIORITY</span>
+    </div>
+
+    <div className="case-info-grid">
+      <div>
+        <span>Crash Trigger</span>
+        <strong>
+          {sosCase.triggerType === "AUTO_ESCALATION"
+            ? "No victim response after countdown"
+            : "Victim confirmed help after crash alert"}
+        </strong>
+      </div>
+
+      <div>
+        <span>Detection Source</span>
+        <strong>{sosCase.detectionSource || "AUTO_CRASH_DETECTION"}</strong>
+      </div>
+
+      <div>
+        <span>Detection Method</span>
+        <strong>
+          {sosCase.sensorData?.detectionMethod || "Not available"}
+        </strong>
+      </div>
+
+      <div>
+        <span>Impact Threshold</span>
+        <strong>
+          {sosCase.sensorData?.impactThreshold
+            ? `${sosCase.sensorData.impactThreshold} m/s²`
+            : "Not available"}
+        </strong>
+      </div>
+
+      <div>
+        <span>Last Motion Reading</span>
+        <strong>{sosCase.sensorData?.lastMagnitude || "Not available"}</strong>
+      </div>
+
+      <div>
+        <span>Response Status</span>
+        <strong>
+          {sosCase.triggerType === "AUTO_ESCALATION"
+            ? "Victim did not respond"
+            : "Victim pressed I NEED HELP NOW"}
+        </strong>
+      </div>
+    </div>
+  </div>
+)}
 
       {renderReporterBox()}
 

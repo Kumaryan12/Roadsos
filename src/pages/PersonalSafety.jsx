@@ -12,7 +12,7 @@ import { db } from "../firebase";
 
 import MapView from "../components/MapView";
 import NearbyServices from "../components/NearbyServices";
-
+import CrashDetector from "../components/CrashDetector";
 function PersonalSafety() {
   const emptyUser = {
     name: "",
@@ -789,6 +789,7 @@ function PersonalSafety() {
           </div>
         </div>
 
+        <CrashDetector user={user} location={location} setLocation={setLocation} />
         <div className="card emergency-card">
           <h2>Step 1: Detect My Location</h2>
 
