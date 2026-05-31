@@ -24,3 +24,7 @@ dist-ssr
 *.sw?
 node_modules/
 /Users/aryansatyendrakumar/roadsos-final/src/firebase.js
+
+.env
+.env.local
+.env.*.local
