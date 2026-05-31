@@ -34,8 +34,13 @@ function PersonalSafety() {
   };
 
   const [user, setUser] = useState(emptyUser);
+
   const [profileSaved, setProfileSaved] = useState(false);
-  const [editMode, setEditMode] = useState(false);
+  const [profileMode, setProfileMode] = useState("entry");
+  // entry | create | edit | emergency
+
+  const [loadPhone, setLoadPhone] = useState("");
+  const [loadingProfile, setLoadingProfile] = useState(false);
 
   const [location, setLocation] = useState(null);
 
@@ -59,7 +64,7 @@ function PersonalSafety() {
     const savedPhone = localStorage.getItem("roadsos_phone");
 
     if (savedPhone) {
-      loadSavedProfile(savedPhone);
+      loadSavedProfile(savedPhone, true);
     }
   }, []);
 
@@ -242,7 +247,7 @@ function PersonalSafety() {
 
       setUser(profileData);
       setProfileSaved(true);
-      setEditMode(false);
+      setProfileMode("emergency");
 
       alert("RoadSoS profile saved. Emergency mode is now ready.");
     } catch (error) {
@@ -253,19 +258,46 @@ function PersonalSafety() {
     setSavingProfile(false);
   };
 
-  const loadSavedProfile = async (phone) => {
+  const loadSavedProfile = async (phone, silent = false) => {
+    const normalizedPhone = normalizePhoneNumber(phone);
+
+    if (!normalizedPhone) {
+      alert("Please enter a valid phone number.");
+      return;
+    }
+
+    setLoadingProfile(true);
+
     try {
-      const profileRef = doc(db, "registered_users", phone);
+      const profileRef = doc(db, "registered_users", normalizedPhone);
       const profileSnap = await getDoc(profileRef);
 
       if (profileSnap.exists()) {
-        setUser(profileSnap.data());
+        const profileData = profileSnap.data();
+
+        setUser(profileData);
         setProfileSaved(true);
-        setEditMode(false);
+        setProfileMode("emergency");
+
+        localStorage.setItem("roadsos_phone", normalizedPhone);
+
+        if (!silent) {
+          alert("Profile loaded successfully. Emergency mode is ready.");
+        }
+      } else {
+        setProfileSaved(false);
+        setProfileMode("entry");
+
+        if (!silent) {
+          alert("No RoadSoS profile found for this phone number.");
+        }
       }
     } catch (error) {
       console.error(error);
+      alert("Failed to load profile. Check Firebase connection.");
     }
+
+    setLoadingProfile(false);
   };
 
   const getLocation = () => {
@@ -369,7 +401,7 @@ function PersonalSafety() {
 
   const sendManualSos = async () => {
     if (!profileSaved) {
-      alert("Please create your RoadSoS profile first.");
+      alert("Please create or load your RoadSoS profile first.");
       return;
     }
 
@@ -449,11 +481,11 @@ function PersonalSafety() {
       )}`
     : "#";
 
-  const logoutProfile = () => {
+  const clearSavedProfile = () => {
     localStorage.removeItem("roadsos_phone");
     setUser(emptyUser);
     setProfileSaved(false);
-    setEditMode(false);
+    setProfileMode("entry");
     setLocation(null);
     setSosCreated(null);
     setIncidentNote("");
@@ -468,7 +500,476 @@ function PersonalSafety() {
     });
   };
 
-  const showProfileForm = !profileSaved || editMode;
+  const renderEntryScreen = () => {
+    return (
+      <>
+        <div className="victim-auth-hero">
+          <span className="ready-badge">VICTIM FLOW</span>
+
+          <h2>Fast emergency access with saved RoadSoS profile</h2>
+
+          <p>
+            Create your profile once when you are safe. During an accident,
+            RoadSoS skips login and directly opens emergency mode on this
+            device.
+          </p>
+        </div>
+
+        <div className="victim-auth-grid">
+          <div className="card">
+            <h2>New user?</h2>
+
+            <p className="muted-text">
+              Create your RoadSoS profile with medical details, emergency
+              contact, and registered vehicles.
+            </p>
+
+            <button
+              className="secondary-btn full"
+              onClick={() => {
+                setUser(emptyUser);
+                setProfileMode("create");
+              }}
+            >
+              Create New RoadSoS Profile
+            </button>
+          </div>
+
+          <div className="card">
+            <h2>Already registered?</h2>
+
+            <p className="muted-text">
+              Enter your registered phone number to quickly load your saved
+              profile on this device.
+            </p>
+
+            <input
+              placeholder="Registered phone number, e.g. 919876543210"
+              value={loadPhone}
+              onChange={(e) => setLoadPhone(e.target.value)}
+            />
+
+            <button
+              className="primary-btn full"
+              onClick={() => loadSavedProfile(loadPhone)}
+              disabled={loadingProfile}
+            >
+              {loadingProfile ? "Loading Profile..." : "Load Existing Profile"}
+            </button>
+          </div>
+        </div>
+      </>
+    );
+  };
+
+  const renderProfileForm = () => {
+    return (
+      <div className="card">
+        <h2>
+          {profileMode === "edit"
+            ? "Edit RoadSoS Profile"
+            : "Create RoadSoS Profile"}
+        </h2>
+
+        <p className="muted-text">
+          This profile stays hidden during emergency use and is sent in the
+          background only when SOS is raised.
+        </p>
+
+        <input
+          placeholder="Full Name"
+          value={user.name}
+          onChange={(e) => updateUser("name", e.target.value)}
+        />
+
+        <input
+          placeholder="Phone Number, e.g. 919876543210"
+          value={user.phone}
+          onChange={(e) => updateUser("phone", e.target.value)}
+        />
+
+        <input
+          placeholder="Age"
+          value={user.age}
+          onChange={(e) => updateUser("age", e.target.value)}
+        />
+
+        <select
+          value={user.gender}
+          onChange={(e) => updateUser("gender", e.target.value)}
+          className="input-select"
+        >
+          <option value="">Select Gender</option>
+          <option value="Male">Male</option>
+          <option value="Female">Female</option>
+          <option value="Other">Other</option>
+          <option value="Prefer not to say">Prefer not to say</option>
+        </select>
+
+        <input
+          placeholder="Emergency Contact, e.g. 919999999999"
+          value={user.emergencyContact}
+          onChange={(e) => updateUser("emergencyContact", e.target.value)}
+        />
+
+        <input
+          placeholder="Blood Group, e.g. O+"
+          value={user.bloodGroup}
+          onChange={(e) => updateUser("bloodGroup", e.target.value)}
+        />
+
+        <input
+          placeholder="Medical Conditions, e.g. diabetes, asthma"
+          value={user.medicalConditions}
+          onChange={(e) => updateUser("medicalConditions", e.target.value)}
+        />
+
+        <input
+          placeholder="Allergies, e.g. penicillin, peanuts"
+          value={user.allergies}
+          onChange={(e) => updateUser("allergies", e.target.value)}
+        />
+
+        <div className="vehicle-section">
+          <div className="section-mini-header">
+            <h3>Registered Vehicles</h3>
+
+            <button type="button" className="mini-btn" onClick={addVehicle}>
+              + Add Vehicle
+            </button>
+          </div>
+
+          {user.vehicles.map((vehicle, index) => (
+            <div className="vehicle-card" key={index}>
+              <div className="vehicle-top-row">
+                <strong>Vehicle {index + 1}</strong>
+
+                {vehicle.primary ? (
+                  <span className="primary-chip">Primary</span>
+                ) : (
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() => setPrimaryVehicle(index)}
+                  >
+                    Set Primary
+                  </button>
+                )}
+              </div>
+
+              <input
+                placeholder="Vehicle Number, e.g. GA 03 AB 1234"
+                value={vehicle.vehicleNumber}
+                onChange={(e) =>
+                  updateVehicle(index, "vehicleNumber", e.target.value)
+                }
+              />
+
+              <select
+                value={vehicle.vehicleType}
+                onChange={(e) =>
+                  updateVehicle(index, "vehicleType", e.target.value)
+                }
+                className="input-select"
+              >
+                <option value="Two-wheeler">Two-wheeler</option>
+                <option value="Car">Car</option>
+                <option value="Auto">Auto</option>
+                <option value="Truck">Truck</option>
+                <option value="Bus">Bus</option>
+                <option value="Other">Other</option>
+              </select>
+
+              <input
+                placeholder="Vehicle Name/Model, e.g. Activa, Swift"
+                value={vehicle.vehicleName}
+                onChange={(e) =>
+                  updateVehicle(index, "vehicleName", e.target.value)
+                }
+              />
+
+              <button
+                type="button"
+                className="danger-light-btn"
+                onClick={() => removeVehicle(index)}
+              >
+                Remove Vehicle
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <button
+          className="secondary-btn full"
+          onClick={saveProfile}
+          disabled={savingProfile}
+        >
+          {savingProfile
+            ? "Saving Profile..."
+            : "Save Profile & Enable Safety Mode"}
+        </button>
+
+        <button
+          className="danger-light-btn"
+          onClick={() =>
+            profileSaved ? setProfileMode("emergency") : setProfileMode("entry")
+          }
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  };
+
+  const renderEmergencyScreen = () => {
+    return (
+      <>
+        <div className="safety-ready-card">
+          <div>
+            <span className="ready-badge">PROFILE READY</span>
+            <h2>RoadSoS is ready for emergency use</h2>
+            <p>
+              Your profile is saved in the background. Before sending SOS,
+              describe what happened to you using quick first-person options.
+            </p>
+          </div>
+
+          <div className="safety-actions">
+            <button
+              className="secondary-btn"
+              onClick={() => setProfileMode("edit")}
+            >
+              Edit Profile
+            </button>
+
+            <button className="danger-light-btn" onClick={clearSavedProfile}>
+              Clear Saved Profile
+            </button>
+          </div>
+        </div>
+
+        <div className="card profile-summary-card">
+          <h2>Emergency Profile Active</h2>
+
+          <p className="muted-text">
+            These saved details will be sent to the responder dashboard when SOS
+            is raised.
+          </p>
+
+          <div className="profile-summary-grid">
+            <div>
+              <span>Name</span>
+              <strong>{user.name}</strong>
+            </div>
+
+            <div>
+              <span>RoadSoS ID</span>
+              <strong>{user.roadSosId || "Generated after save"}</strong>
+            </div>
+
+            <div>
+              <span>Blood Group</span>
+              <strong>{user.bloodGroup}</strong>
+            </div>
+
+            <div>
+              <span>Emergency Contact</span>
+              <strong>{user.emergencyContact}</strong>
+            </div>
+
+            <div>
+              <span>Registered Vehicles</span>
+              <strong>{user.vehicles?.length || 0}</strong>
+            </div>
+
+            <div>
+              <span>Safety Status</span>
+              <strong>Ready</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="card emergency-card">
+          <h2>Step 1: Detect My Location</h2>
+
+          <p className="muted-text">
+            RoadSoS needs your current location to send the emergency case to
+            the responder dashboard.
+          </p>
+
+          <button className="secondary-btn full" onClick={getLocation}>
+            Detect My Location
+          </button>
+
+          {location && (
+            <p className="success-text">
+              Location detected: {location.latitude.toFixed(4)},{" "}
+              {location.longitude.toFixed(4)}
+            </p>
+          )}
+
+          <div className="severity-box">
+            Current Severity: <strong>{calculateSeverity()}</strong>
+          </div>
+        </div>
+
+        <div className="card">
+          <h2>Step 2: What happened to me?</h2>
+
+          <p className="muted-text">
+            Select what applies before sending SOS. These details help the
+            responder understand your condition.
+          </p>
+
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={severityAnswers.injured}
+              onChange={() => updateSeverity("injured")}
+            />
+            I am injured
+          </label>
+
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={severityAnswers.bleeding}
+              onChange={() => updateSeverity("bleeding")}
+            />
+            I am bleeding
+          </label>
+
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={severityAnswers.cannotMove}
+              onChange={() => updateSeverity("cannotMove")}
+            />
+            I cannot move properly
+          </label>
+
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={severityAnswers.dizzyOrUnconscious}
+              onChange={() => updateSeverity("dizzyOrUnconscious")}
+            />
+            I feel dizzy or may lose consciousness
+          </label>
+
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={severityAnswers.vehicleBlocked}
+              onChange={() => updateSeverity("vehicleBlocked")}
+            />
+            My vehicle is blocking the road
+          </label>
+
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={severityAnswers.fireOrSmoke}
+              onChange={() => updateSeverity("fireOrSmoke")}
+            />
+            There is fire, smoke, or fuel leakage
+          </label>
+
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={severityAnswers.otherVictims}
+              onChange={() => updateSeverity("otherVictims")}
+            />
+            There are other injured people near me
+          </label>
+
+          <textarea
+            className="input-textarea"
+            placeholder="Optional: describe what happened in one line, e.g. I fell from my bike near the highway turn."
+            value={incidentNote}
+            onChange={(e) => setIncidentNote(e.target.value)}
+          />
+
+          <div className="situation-preview">
+            <strong>Emergency Summary:</strong>
+            <p>
+              {hasEmergencyDetails()
+                ? getVictimSituationSummary()
+                : "Select at least one condition or write a short note before sending SOS."}
+            </p>
+          </div>
+        </div>
+
+        <div className="card send-sos-card">
+          <h2>Step 3: Send SOS</h2>
+
+          <p className="muted-text">
+            Once you press this button, RoadSoS will send your saved profile,
+            location, severity, and emergency summary to the responder dashboard.
+          </p>
+
+          <button
+            className="sos-btn"
+            onClick={sendManualSos}
+            disabled={sendingSos}
+          >
+            {sendingSos ? "Sending SOS..." : "I NEED HELP"}
+          </button>
+
+          {sosCreated && (
+            <div className="alert-box">
+              <h3>SOS Sent</h3>
+
+              <p>
+                <strong>Severity:</strong> {sosCreated.severity}
+              </p>
+
+              <p>
+                <strong>Case ID:</strong> {sosCreated.id}
+              </p>
+
+              <a
+                href={sosCreated.mapsLink}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open Accident Location
+              </a>
+
+              <a
+                href={whatsappLink}
+                target="_blank"
+                rel="noreferrer"
+                className="primary-btn full"
+              >
+                Send WhatsApp Alert
+              </a>
+
+              <a
+                href={`tel:${user.emergencyContact}`}
+                className="secondary-btn full"
+              >
+                Call Emergency Contact
+              </a>
+            </div>
+          )}
+        </div>
+
+        <div className="card">
+          <h2>Live Location Map</h2>
+
+          <MapView
+            latitude={location?.latitude}
+            longitude={location?.longitude}
+            height="350px"
+          />
+        </div>
+
+        <NearbyServices location={location} />
+      </>
+    );
+  };
 
   return (
     <div className="page">
@@ -476,415 +977,20 @@ function PersonalSafety() {
         <div>
           <h1>Personal Safety Mode</h1>
           <p>
-            Create your profile once. During emergency, only location and
-            first-person condition details are required before sending SOS.
+            Victim-side access is designed for speed: create or load your
+            profile once, then use one-tap emergency mode during an accident.
           </p>
         </div>
 
-        <Link to="/" className="small-link">
-          Home
+        <Link to="/citizen" className="small-link">
+          Citizen Portal
         </Link>
       </div>
 
-      {showProfileForm ? (
-        <div className="card">
-          <h2>Create RoadSoS Profile</h2>
-
-          <p className="muted-text">
-            This profile stays hidden during emergency use and is sent in the
-            background only when SOS is raised.
-          </p>
-
-          <input
-            placeholder="Full Name"
-            value={user.name}
-            onChange={(e) => updateUser("name", e.target.value)}
-          />
-
-          <input
-            placeholder="Phone Number, e.g. 919876543210"
-            value={user.phone}
-            onChange={(e) => updateUser("phone", e.target.value)}
-          />
-
-          <input
-            placeholder="Age"
-            value={user.age}
-            onChange={(e) => updateUser("age", e.target.value)}
-          />
-
-          <select
-            value={user.gender}
-            onChange={(e) => updateUser("gender", e.target.value)}
-            className="input-select"
-          >
-            <option value="">Select Gender</option>
-            <option value="Male">Male</option>
-            <option value="Female">Female</option>
-            <option value="Other">Other</option>
-            <option value="Prefer not to say">Prefer not to say</option>
-          </select>
-
-          <input
-            placeholder="Emergency Contact, e.g. 919999999999"
-            value={user.emergencyContact}
-            onChange={(e) => updateUser("emergencyContact", e.target.value)}
-          />
-
-          <input
-            placeholder="Blood Group, e.g. O+"
-            value={user.bloodGroup}
-            onChange={(e) => updateUser("bloodGroup", e.target.value)}
-          />
-
-          <input
-            placeholder="Medical Conditions, e.g. diabetes, asthma"
-            value={user.medicalConditions}
-            onChange={(e) => updateUser("medicalConditions", e.target.value)}
-          />
-
-          <input
-            placeholder="Allergies, e.g. penicillin, peanuts"
-            value={user.allergies}
-            onChange={(e) => updateUser("allergies", e.target.value)}
-          />
-
-          <div className="vehicle-section">
-            <div className="section-mini-header">
-              <h3>Registered Vehicles</h3>
-
-              <button type="button" className="mini-btn" onClick={addVehicle}>
-                + Add Vehicle
-              </button>
-            </div>
-
-            {user.vehicles.map((vehicle, index) => (
-              <div className="vehicle-card" key={index}>
-                <div className="vehicle-top-row">
-                  <strong>Vehicle {index + 1}</strong>
-
-                  {vehicle.primary ? (
-                    <span className="primary-chip">Primary</span>
-                  ) : (
-                    <button
-                      type="button"
-                      className="link-btn"
-                      onClick={() => setPrimaryVehicle(index)}
-                    >
-                      Set Primary
-                    </button>
-                  )}
-                </div>
-
-                <input
-                  placeholder="Vehicle Number, e.g. GA 03 AB 1234"
-                  value={vehicle.vehicleNumber}
-                  onChange={(e) =>
-                    updateVehicle(index, "vehicleNumber", e.target.value)
-                  }
-                />
-
-                <select
-                  value={vehicle.vehicleType}
-                  onChange={(e) =>
-                    updateVehicle(index, "vehicleType", e.target.value)
-                  }
-                  className="input-select"
-                >
-                  <option value="Two-wheeler">Two-wheeler</option>
-                  <option value="Car">Car</option>
-                  <option value="Auto">Auto</option>
-                  <option value="Truck">Truck</option>
-                  <option value="Bus">Bus</option>
-                  <option value="Other">Other</option>
-                </select>
-
-                <input
-                  placeholder="Vehicle Name/Model, e.g. Activa, Swift"
-                  value={vehicle.vehicleName}
-                  onChange={(e) =>
-                    updateVehicle(index, "vehicleName", e.target.value)
-                  }
-                />
-
-                <button
-                  type="button"
-                  className="danger-light-btn"
-                  onClick={() => removeVehicle(index)}
-                >
-                  Remove Vehicle
-                </button>
-              </div>
-            ))}
-          </div>
-
-          <button
-            className="secondary-btn full"
-            onClick={saveProfile}
-            disabled={savingProfile}
-          >
-            {savingProfile
-              ? "Saving Profile..."
-              : "Save Profile & Enable Safety Mode"}
-          </button>
-
-          {profileSaved && (
-            <button
-              className="danger-light-btn"
-              onClick={() => setEditMode(false)}
-            >
-              Cancel Edit
-            </button>
-          )}
-        </div>
-      ) : (
-        <>
-          <div className="safety-ready-card">
-            <div>
-              <span className="ready-badge">PROFILE READY</span>
-              <h2>RoadSoS is ready for emergency use</h2>
-              <p>
-                Your profile is saved in the background. Before sending SOS,
-                describe what happened to you using quick first-person options.
-              </p>
-            </div>
-
-            <div className="safety-actions">
-              <button
-                className="secondary-btn"
-                onClick={() => setEditMode(true)}
-              >
-                Edit Profile
-              </button>
-
-              <button className="danger-light-btn" onClick={logoutProfile}>
-                Clear Saved Profile
-              </button>
-            </div>
-          </div>
-
-          <div className="card profile-summary-card">
-            <h2>Emergency Profile Active</h2>
-
-            <p className="muted-text">
-              These saved details will be sent to the responder dashboard when
-              SOS is raised.
-            </p>
-
-            <div className="profile-summary-grid">
-              <div>
-                <span>Name</span>
-                <strong>{user.name}</strong>
-              </div>
-
-              <div>
-                <span>RoadSoS ID</span>
-                <strong>{user.roadSosId || "Generated after save"}</strong>
-              </div>
-
-              <div>
-                <span>Blood Group</span>
-                <strong>{user.bloodGroup}</strong>
-              </div>
-
-              <div>
-                <span>Emergency Contact</span>
-                <strong>{user.emergencyContact}</strong>
-              </div>
-
-              <div>
-                <span>Registered Vehicles</span>
-                <strong>{user.vehicles?.length || 0}</strong>
-              </div>
-
-              <div>
-                <span>Safety Status</span>
-                <strong>Ready</strong>
-              </div>
-            </div>
-          </div>
-
-          <div className="card emergency-card">
-            <h2>Step 1: Detect My Location</h2>
-
-            <p className="muted-text">
-              RoadSoS needs your current location to send the emergency case to
-              the responder dashboard.
-            </p>
-
-            <button className="secondary-btn full" onClick={getLocation}>
-              Detect My Location
-            </button>
-
-            {location && (
-              <p className="success-text">
-                Location detected: {location.latitude.toFixed(4)},{" "}
-                {location.longitude.toFixed(4)}
-              </p>
-            )}
-
-            <div className="severity-box">
-              Current Severity: <strong>{calculateSeverity()}</strong>
-            </div>
-          </div>
-
-          <div className="card">
-            <h2>Step 2: What happened to me?</h2>
-
-            <p className="muted-text">
-              Select what applies before sending SOS. These details help the
-              responder understand your condition.
-            </p>
-
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={severityAnswers.injured}
-                onChange={() => updateSeverity("injured")}
-              />
-              I am injured
-            </label>
-
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={severityAnswers.bleeding}
-                onChange={() => updateSeverity("bleeding")}
-              />
-              I am bleeding
-            </label>
-
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={severityAnswers.cannotMove}
-                onChange={() => updateSeverity("cannotMove")}
-              />
-              I cannot move properly
-            </label>
-
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={severityAnswers.dizzyOrUnconscious}
-                onChange={() => updateSeverity("dizzyOrUnconscious")}
-              />
-              I feel dizzy or may lose consciousness
-            </label>
-
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={severityAnswers.vehicleBlocked}
-                onChange={() => updateSeverity("vehicleBlocked")}
-              />
-              My vehicle is blocking the road
-            </label>
-
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={severityAnswers.fireOrSmoke}
-                onChange={() => updateSeverity("fireOrSmoke")}
-              />
-              There is fire, smoke, or fuel leakage
-            </label>
-
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={severityAnswers.otherVictims}
-                onChange={() => updateSeverity("otherVictims")}
-              />
-              There are other injured people near me
-            </label>
-
-            <textarea
-              className="input-textarea"
-              placeholder="Optional: describe what happened in one line, e.g. I fell from my bike near the highway turn."
-              value={incidentNote}
-              onChange={(e) => setIncidentNote(e.target.value)}
-            />
-
-            <div className="situation-preview">
-              <strong>Emergency Summary:</strong>
-              <p>
-                {hasEmergencyDetails()
-                  ? getVictimSituationSummary()
-                  : "Select at least one condition or write a short note before sending SOS."}
-              </p>
-            </div>
-          </div>
-
-          <div className="card send-sos-card">
-            <h2>Step 3: Send SOS</h2>
-
-            <p className="muted-text">
-              Once you press this button, RoadSoS will send your saved profile,
-              location, severity, and emergency summary to the responder
-              dashboard.
-            </p>
-
-            <button
-              className="sos-btn"
-              onClick={sendManualSos}
-              disabled={sendingSos}
-            >
-              {sendingSos ? "Sending SOS..." : "I NEED HELP"}
-            </button>
-
-            {sosCreated && (
-              <div className="alert-box">
-                <h3>SOS Sent</h3>
-
-                <p>
-                  <strong>Severity:</strong> {sosCreated.severity}
-                </p>
-
-                <p>
-                  <strong>Case ID:</strong> {sosCreated.id}
-                </p>
-
-                <a
-                  href={sosCreated.mapsLink}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Open Accident Location
-                </a>
-
-                <a
-                  href={whatsappLink}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="primary-btn full"
-                >
-                  Send WhatsApp Alert
-                </a>
-
-                <a
-                  href={`tel:${user.emergencyContact}`}
-                  className="secondary-btn full"
-                >
-                  Call Emergency Contact
-                </a>
-              </div>
-            )}
-          </div>
-
-          <div className="card">
-            <h2>Live Location Map</h2>
-
-            <MapView
-              latitude={location?.latitude}
-              longitude={location?.longitude}
-              height="350px"
-            />
-          </div>
-
-          <NearbyServices location={location} />
-        </>
-      )}
+      {profileMode === "entry" && renderEntryScreen()}
+      {(profileMode === "create" || profileMode === "edit") &&
+        renderProfileForm()}
+      {profileMode === "emergency" && renderEmergencyScreen()}
     </div>
   );
 }

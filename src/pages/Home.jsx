@@ -13,36 +13,44 @@ function Home() {
         </p>
 
         <p className="hero-description">
-          RoadSoS connects accident victims, bystanders, and responders through
-          location-based SOS, vehicle-based victim matching, medical ID, and a
-          live admin dashboard.
+          RoadSoS connects citizens and responders through location-based SOS,
+          bystander accident reporting, vehicle-number-based victim matching,
+          medical profiles, and live case tracking.
         </p>
 
-        <div className="mode-grid">
-          <Link to="/safety" className="mode-card red-mode">
-            <div className="mode-icon">🛡️</div>
-            <h2>Personal Safety Mode</h2>
+        <div className="two-layer-grid">
+          <Link to="/citizen" className="layer-card citizen-layer">
+            <div className="layer-icon">👥</div>
+
+            <h2>Citizen Portal</h2>
+
             <p>
-              Create your RoadSoS profile, register vehicles, and send emergency
-              help requests.
+              For victims and bystanders. Create a safety profile, send SOS, or
+              report an accident for someone else.
             </p>
+
+            <div className="layer-subfeatures">
+              <span>Victim SOS</span>
+              <span>Bystander Report</span>
+              <span>Vehicle Details</span>
+            </div>
           </Link>
 
-          <Link to="/report" className="mode-card yellow-mode">
-            <div className="mode-icon">🚨</div>
-            <h2>Report Accident</h2>
-            <p>
-              For bystanders who witness an accident and want to alert responders
-              quickly.
-            </p>
-          </Link>
+          <Link to="/admin" className="layer-card admin-layer">
+            <div className="layer-icon">📡</div>
 
-          <Link to="/admin" className="mode-card dark-mode">
-            <div className="mode-icon">📡</div>
-            <h2>Responder Dashboard</h2>
+            <h2>Admin / Responder Portal</h2>
+
             <p>
-              Monitor incoming SOS cases, identify victims, and coordinate help.
+              For responders and authorities. View incoming SOS cases, match
+              victims, check severity, and assign emergency help.
             </p>
+
+            <div className="layer-subfeatures">
+              <span>Live Cases</span>
+              <span>Victim Matching</span>
+              <span>Status Tracking</span>
+            </div>
           </Link>
         </div>
 

@@ -1,5 +1,11 @@
-import { useState } from "react";
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { useEffect, useState } from "react";
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  serverTimestamp
+} from "firebase/firestore";
 import { Link } from "react-router-dom";
 import { db } from "../firebase";
 
@@ -7,7 +13,14 @@ import MapView from "../components/MapView";
 import NearbyServices from "../components/NearbyServices";
 
 function BystanderReport() {
-  const [bystander, setBystander] = useState({
+  const [bystanderMode, setBystanderMode] = useState("entry");
+  // entry | report
+
+  const [registeredBystander, setRegisteredBystander] = useState(null);
+  const [loadPhone, setLoadPhone] = useState("");
+  const [loadingProfile, setLoadingProfile] = useState(false);
+
+  const [guestBystander, setGuestBystander] = useState({
     name: "",
     phone: ""
   });
@@ -34,6 +47,14 @@ function BystanderReport() {
   const [submitting, setSubmitting] = useState(false);
   const [reportCreated, setReportCreated] = useState(null);
 
+  useEffect(() => {
+    const savedPhone = localStorage.getItem("roadsos_phone");
+
+    if (savedPhone) {
+      loadRegisteredBystander(savedPhone, true);
+    }
+  }, []);
+
   const normalizeVehicleNumber = (vehicleNumber) => {
     return vehicleNumber.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
   };
@@ -42,8 +63,59 @@ function BystanderReport() {
     return phone.replace(/[^0-9]/g, "");
   };
 
-  const updateBystander = (field, value) => {
-    setBystander((prev) => ({
+  const loadRegisteredBystander = async (phone, silent = false) => {
+    const normalizedPhone = normalizePhoneNumber(phone);
+
+    if (!normalizedPhone) {
+      alert("Please enter a valid phone number.");
+      return;
+    }
+
+    setLoadingProfile(true);
+
+    try {
+      const profileRef = doc(db, "registered_users", normalizedPhone);
+      const profileSnap = await getDoc(profileRef);
+
+      if (profileSnap.exists()) {
+        const profileData = profileSnap.data();
+
+        setRegisteredBystander(profileData);
+        localStorage.setItem("roadsos_phone", normalizedPhone);
+        setBystanderMode("report");
+
+        if (!silent) {
+          alert("Registered RoadSoS profile loaded. Report will be submitted as a verified bystander.");
+        }
+      } else {
+        if (!silent) {
+          alert("No RoadSoS profile found for this phone number.");
+        }
+      }
+    } catch (error) {
+      console.error(error);
+      alert("Failed to load profile. Check Firebase connection.");
+    }
+
+    setLoadingProfile(false);
+  };
+
+  const continueAsGuest = () => {
+    setRegisteredBystander(null);
+    setBystanderMode("report");
+  };
+
+  const clearBystanderIdentity = () => {
+    setRegisteredBystander(null);
+    setGuestBystander({
+      name: "",
+      phone: ""
+    });
+    setBystanderMode("entry");
+  };
+
+  const updateGuestBystander = (field, value) => {
+    setGuestBystander((prev) => ({
       ...prev,
       [field]: value
     }));
@@ -113,6 +185,7 @@ function BystanderReport() {
 
   const hasAccidentDetails = () => {
     const anyConditionSelected = Object.values(conditionAnswers).some(Boolean);
+
     return (
       anyConditionSelected ||
       report.vehicleNumber.trim().length > 0 ||
@@ -170,6 +243,41 @@ function BystanderReport() {
     return selected.join(". ");
   };
 
+  const calculateConfidenceScore = () => {
+    let score = 0;
+
+    if (registeredBystander) score += 30;
+    if (!registeredBystander && guestBystander.phone.trim()) score += 15;
+    if (location) score += 25;
+    if (report.vehicleNumber.trim()) score += 25;
+    if (Object.values(conditionAnswers).some(Boolean)) score += 20;
+    if (report.note.trim()) score += 10;
+
+    return Math.min(score, 100);
+  };
+
+  const getConfidenceLevel = (score) => {
+    if (score >= 80) return "HIGH";
+    if (score >= 50) return "MEDIUM";
+    return "LOW";
+  };
+
+  const getReporterType = () => {
+    if (registeredBystander) return "REGISTERED_ROADSOS_USER";
+
+    if (guestBystander.phone.trim()) {
+      return "GUEST_WITH_CONTACT";
+    }
+
+    return "ANONYMOUS_GUEST";
+  };
+
+  const getReporterIdentityStatus = () => {
+    if (registeredBystander) return "KNOWN";
+    if (guestBystander.phone.trim()) return "PARTIALLY_KNOWN";
+    return "UNKNOWN";
+  };
+
   const getRecommendedAction = (severity) => {
     if (severity === "Critical") {
       return "Dispatch ambulance immediately, notify police, route to nearest trauma centre, and verify victim identity using vehicle number.";
@@ -221,22 +329,43 @@ function BystanderReport() {
 
       const situationSummary = getBystanderSituationSummary();
 
+      const confidenceScore = calculateConfidenceScore();
+      const confidenceLevel = getConfidenceLevel(confidenceScore);
+
+      const reporterType = getReporterType();
+      const reporterIdentityStatus = getReporterIdentityStatus();
+
       const reportData = {
         triggerType: "BYSTANDER_REPORT",
         detectionSource: "BYSTANDER_APP_OPEN",
         sosSource: "BYSTANDER",
 
+        reporterType,
+        reporterIdentityStatus,
+
+        bystander: registeredBystander
+          ? {
+              roadSosId: registeredBystander.roadSosId || "",
+              name: registeredBystander.name || "",
+              phone: registeredBystander.phone || "",
+              phoneNormalized: registeredBystander.phoneNormalized || "",
+              profileSource: "registered_users"
+            }
+          : {
+              name: guestBystander.name.trim() || "Anonymous bystander",
+              phone: guestBystander.phone.trim(),
+              phoneNormalized: normalizePhoneNumber(guestBystander.phone),
+              profileSource: "guest"
+            },
+
         victimIdentityStatus: reportedVehicleNumberNormalized
           ? "UNVERIFIED_VEHICLE_PROVIDED"
           : "UNKNOWN",
-        confidenceLevel: reportedVehicleNumberNormalized ? "MEDIUM" : "LOW",
-        emergencyContactNotified: false,
 
-        bystander: {
-          name: bystander.name.trim() || "Anonymous bystander",
-          phone: bystander.phone.trim(),
-          phoneNormalized: normalizePhoneNumber(bystander.phone)
-        },
+        confidenceScore,
+        confidenceLevel,
+        verificationRequired: true,
+        emergencyContactNotified: false,
 
         reportedVehicleNumber: report.vehicleNumber.trim(),
         reportedVehicleNumberNormalized,
@@ -256,12 +385,13 @@ function BystanderReport() {
 
         recommendedAction: getRecommendedAction(severity),
 
-        status: "New",
+        status: "Needs Verification",
         timeline: [
           {
             label: "Bystander Report Created",
-            description:
-              "A bystander submitted an accident report with observed victim and vehicle details.",
+            description: registeredBystander
+              ? "A registered RoadSoS user submitted a bystander accident report."
+              : "A guest bystander submitted an accident report.",
             time: new Date().toISOString()
           }
         ],
@@ -277,7 +407,10 @@ function BystanderReport() {
         id: docRef.id,
         severity,
         mapsLink,
-        situationSummary
+        situationSummary,
+        confidenceScore,
+        confidenceLevel,
+        reporterType
       });
 
       alert("Bystander accident report submitted successfully.");
@@ -289,55 +422,93 @@ function BystanderReport() {
     setSubmitting(false);
   };
 
-  return (
-    <div className="page">
-      <div className="top-bar">
-        <div>
-          <h1>Bystander Accident Report</h1>
+  const renderEntryScreen = () => {
+    return (
+      <>
+        <div className="bystander-hero-card">
+          <span className="bystander-badge">BYSTANDER MODE</span>
+
+          <h2>Report an accident quickly and responsibly</h2>
+
           <p>
-            Report an accident for someone else using location, vehicle number,
-            approximate victim details, and visible emergency conditions.
+            If you are already a RoadSoS user, your profile will be used
+            automatically as the reporter identity. If not, you can load your
+            profile or continue as a guest.
           </p>
         </div>
 
-        <Link to="/" className="small-link">
-          Home
-        </Link>
-      </div>
+        <div className="bystander-auth-grid">
+          <div className="card">
+            <h2>Already a RoadSoS user?</h2>
 
-      <div className="bystander-hero-card">
-        <span className="bystander-badge">BYSTANDER MODE</span>
+            <p className="muted-text">
+              Enter your registered phone number. Your report will be marked as
+              coming from a registered RoadSoS user, increasing trust.
+            </p>
 
-        <h2>Help someone even if you do not know them</h2>
+            <input
+              placeholder="Registered phone number, e.g. 919876543210"
+              value={loadPhone}
+              onChange={(e) => setLoadPhone(e.target.value)}
+            />
 
-        <p>
-          If the victim cannot use their phone, your report can help responders
-          identify the victim through vehicle number and dispatch help faster.
-        </p>
-      </div>
+            <button
+              className="primary-btn full"
+              onClick={() => loadRegisteredBystander(loadPhone)}
+              disabled={loadingProfile}
+            >
+              {loadingProfile ? "Loading Profile..." : "Load My Profile"}
+            </button>
+          </div>
 
+          <div className="card">
+            <h2>Not registered?</h2>
+
+            <p className="muted-text">
+              You can still report the accident as a guest. Your report will
+              reach the admin dashboard but will require verification.
+            </p>
+
+            <button className="secondary-btn full" onClick={continueAsGuest}>
+              Continue as Guest Bystander
+            </button>
+          </div>
+        </div>
+      </>
+    );
+  };
+
+  const renderReporterIdentityCard = () => {
+    if (registeredBystander) {
+      return (
+        <div className="card reporter-identity-card">
+          <h2>Reporter Identity</h2>
+
+          <div className="reporter-known-box">
+            <span className="ready-badge">REGISTERED REPORTER</span>
+
+            <h3>{registeredBystander.name}</h3>
+
+            <p>
+              RoadSoS ID:{" "}
+              <strong>{registeredBystander.roadSosId || "Not available"}</strong>
+            </p>
+
+            <p>
+              Phone: <strong>{registeredBystander.phone}</strong>
+            </p>
+
+            <button className="danger-light-btn" onClick={clearBystanderIdentity}>
+              Use Different Reporter
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
       <div className="card">
-        <h2>Step 1: Accident Location</h2>
-
-        <p className="muted-text">
-          Detect the location where the accident happened. This location will be
-          sent to the responder dashboard.
-        </p>
-
-        <button className="secondary-btn full" onClick={getLocation}>
-          Detect Accident Location
-        </button>
-
-        {location && (
-          <p className="success-text">
-            Accident location detected: {location.latitude.toFixed(4)},{" "}
-            {location.longitude.toFixed(4)}
-          </p>
-        )}
-      </div>
-
-      <div className="card">
-        <h2>Step 2: Bystander Details</h2>
+        <h2>Guest Bystander Details</h2>
 
         <p className="muted-text">
           Optional, but useful if responders need to call you back for
@@ -346,219 +517,299 @@ function BystanderReport() {
 
         <input
           placeholder="Your name, optional"
-          value={bystander.name}
-          onChange={(e) => updateBystander("name", e.target.value)}
+          value={guestBystander.name}
+          onChange={(e) => updateGuestBystander("name", e.target.value)}
         />
 
         <input
           placeholder="Your phone number, optional"
-          value={bystander.phone}
-          onChange={(e) => updateBystander("phone", e.target.value)}
+          value={guestBystander.phone}
+          onChange={(e) => updateGuestBystander("phone", e.target.value)}
         />
+
+        <button className="danger-light-btn" onClick={clearBystanderIdentity}>
+          Go Back
+        </button>
       </div>
+    );
+  };
 
-      <div className="card">
-        <h2>Step 3: Victim / Vehicle Details</h2>
+  const renderReportForm = () => {
+    return (
+      <>
+        <div className="bystander-hero-card">
+          <span className="bystander-badge">ACCIDENT REPORT</span>
 
-        <p className="muted-text">
-          Vehicle number helps the admin match the victim with a registered
-          RoadSoS profile.
-        </p>
+          <h2>Help someone even if you do not know them</h2>
 
-        <input
-          placeholder="Vehicle Number, e.g. GA 03 AB 1234"
-          value={report.vehicleNumber}
-          onChange={(e) => updateReport("vehicleNumber", e.target.value)}
-        />
-
-        <select
-          value={report.vehicleType}
-          onChange={(e) => updateReport("vehicleType", e.target.value)}
-          className="input-select"
-        >
-          <option value="Two-wheeler">Two-wheeler</option>
-          <option value="Car">Car</option>
-          <option value="Auto">Auto</option>
-          <option value="Truck">Truck</option>
-          <option value="Bus">Bus</option>
-          <option value="Other">Other</option>
-        </select>
-
-        <select
-          value={report.approxAge}
-          onChange={(e) => updateReport("approxAge", e.target.value)}
-          className="input-select"
-        >
-          <option value="">Approx Victim Age</option>
-          <option value="Below 18">Below 18</option>
-          <option value="18-25">18-25</option>
-          <option value="26-35">26-35</option>
-          <option value="36-50">36-50</option>
-          <option value="Above 50">Above 50</option>
-          <option value="Unknown">Unknown</option>
-        </select>
-
-        <select
-          value={report.gender}
-          onChange={(e) => updateReport("gender", e.target.value)}
-          className="input-select"
-        >
-          <option value="">Victim Gender</option>
-          <option value="Male">Male</option>
-          <option value="Female">Female</option>
-          <option value="Other">Other</option>
-          <option value="Unknown">Unknown</option>
-        </select>
-
-        <select
-          value={report.victimsCount}
-          onChange={(e) => updateReport("victimsCount", e.target.value)}
-          className="input-select"
-        >
-          <option value="1">1 victim</option>
-          <option value="2">2 victims</option>
-          <option value="3+">3+ victims</option>
-          <option value="Unknown">Unknown</option>
-        </select>
-      </div>
-
-      <div className="card">
-        <h2>Step 4: What do you observe?</h2>
-
-        <p className="muted-text">
-          Select the visible conditions. These will help responders assess
-          urgency before reaching the location.
-        </p>
-
-        <label className="check-row">
-          <input
-            type="checkbox"
-            checked={conditionAnswers.victimUnconscious}
-            onChange={() => updateCondition("victimUnconscious")}
-          />
-          Victim appears unconscious
-        </label>
-
-        <label className="check-row">
-          <input
-            type="checkbox"
-            checked={conditionAnswers.victimBleeding}
-            onChange={() => updateCondition("victimBleeding")}
-          />
-          Victim appears to be bleeding
-        </label>
-
-        <label className="check-row">
-          <input
-            type="checkbox"
-            checked={conditionAnswers.victimCannotMove}
-            onChange={() => updateCondition("victimCannotMove")}
-          />
-          Victim cannot move properly
-        </label>
-
-        <label className="check-row">
-          <input
-            type="checkbox"
-            checked={conditionAnswers.roadBlocked}
-            onChange={() => updateCondition("roadBlocked")}
-          />
-          Road is blocked
-        </label>
-
-        <label className="check-row">
-          <input
-            type="checkbox"
-            checked={conditionAnswers.fireOrSmoke}
-            onChange={() => updateCondition("fireOrSmoke")}
-          />
-          Fire, smoke, or fuel leakage is visible
-        </label>
-
-        <label className="check-row">
-          <input
-            type="checkbox"
-            checked={conditionAnswers.multipleVictims}
-            onChange={() => updateCondition("multipleVictims")}
-          />
-          Multiple victims may be involved
-        </label>
-
-        <textarea
-          className="input-textarea"
-          placeholder="Optional: add a short note, e.g. Bike slipped near the signal, victim is lying near divider."
-          value={report.note}
-          onChange={(e) => updateReport("note", e.target.value)}
-        />
-
-        <div className="situation-preview">
-          <strong>Report Summary:</strong>
           <p>
-            {hasAccidentDetails()
-              ? getBystanderSituationSummary()
-              : "Enter vehicle number, select a condition, or write a short note before submitting report."}
+            If the victim cannot use their phone, your report can help responders
+            identify the victim through vehicle number and dispatch help faster.
           </p>
         </div>
 
-        <div className="severity-box">
-          Current Severity: <strong>{calculateSeverity()}</strong>
+        {renderReporterIdentityCard()}
+
+        <div className="card">
+          <h2>Step 1: Accident Location</h2>
+
+          <p className="muted-text">
+            Detect the location where the accident happened. This location will
+            be sent to the responder dashboard.
+          </p>
+
+          <button className="secondary-btn full" onClick={getLocation}>
+            Detect Accident Location
+          </button>
+
+          {location && (
+            <p className="success-text">
+              Accident location detected: {location.latitude.toFixed(4)},{" "}
+              {location.longitude.toFixed(4)}
+            </p>
+          )}
         </div>
-      </div>
 
-      <div className="card send-sos-card">
-        <h2>Step 5: Submit Accident Report</h2>
+        <div className="card">
+          <h2>Step 2: Victim / Vehicle Details</h2>
 
-        <p className="muted-text">
-          This will create a bystander report in the responder dashboard. Admin
-          can then search the registered user database using the vehicle number.
-        </p>
+          <p className="muted-text">
+            Vehicle number helps the admin match the victim with a registered
+            RoadSoS profile.
+          </p>
 
-        <button
-          className="sos-btn"
-          onClick={submitBystanderReport}
-          disabled={submitting}
-        >
-          {submitting ? "Submitting Report..." : "SUBMIT ACCIDENT REPORT"}
-        </button>
+          <input
+            placeholder="Vehicle Number, e.g. GA 03 AB 1234"
+            value={report.vehicleNumber}
+            onChange={(e) => updateReport("vehicleNumber", e.target.value)}
+          />
 
-        {reportCreated && (
-          <div className="alert-box">
-            <h3>Report Submitted</h3>
+          <select
+            value={report.vehicleType}
+            onChange={(e) => updateReport("vehicleType", e.target.value)}
+            className="input-select"
+          >
+            <option value="Two-wheeler">Two-wheeler</option>
+            <option value="Car">Car</option>
+            <option value="Auto">Auto</option>
+            <option value="Truck">Truck</option>
+            <option value="Bus">Bus</option>
+            <option value="Other">Other</option>
+          </select>
 
+          <select
+            value={report.approxAge}
+            onChange={(e) => updateReport("approxAge", e.target.value)}
+            className="input-select"
+          >
+            <option value="">Approx Victim Age</option>
+            <option value="Below 18">Below 18</option>
+            <option value="18-25">18-25</option>
+            <option value="26-35">26-35</option>
+            <option value="36-50">36-50</option>
+            <option value="Above 50">Above 50</option>
+            <option value="Unknown">Unknown</option>
+          </select>
+
+          <select
+            value={report.gender}
+            onChange={(e) => updateReport("gender", e.target.value)}
+            className="input-select"
+          >
+            <option value="">Victim Gender</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Other">Other</option>
+            <option value="Unknown">Unknown</option>
+          </select>
+
+          <select
+            value={report.victimsCount}
+            onChange={(e) => updateReport("victimsCount", e.target.value)}
+            className="input-select"
+          >
+            <option value="1">1 victim</option>
+            <option value="2">2 victims</option>
+            <option value="3+">3+ victims</option>
+            <option value="Unknown">Unknown</option>
+          </select>
+        </div>
+
+        <div className="card">
+          <h2>Step 3: What do you observe?</h2>
+
+          <p className="muted-text">
+            Select the visible conditions. These will help responders assess
+            urgency before reaching the location.
+          </p>
+
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={conditionAnswers.victimUnconscious}
+              onChange={() => updateCondition("victimUnconscious")}
+            />
+            Victim appears unconscious
+          </label>
+
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={conditionAnswers.victimBleeding}
+              onChange={() => updateCondition("victimBleeding")}
+            />
+            Victim appears to be bleeding
+          </label>
+
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={conditionAnswers.victimCannotMove}
+              onChange={() => updateCondition("victimCannotMove")}
+            />
+            Victim cannot move properly
+          </label>
+
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={conditionAnswers.roadBlocked}
+              onChange={() => updateCondition("roadBlocked")}
+            />
+            Road is blocked
+          </label>
+
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={conditionAnswers.fireOrSmoke}
+              onChange={() => updateCondition("fireOrSmoke")}
+            />
+            Fire, smoke, or fuel leakage is visible
+          </label>
+
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={conditionAnswers.multipleVictims}
+              onChange={() => updateCondition("multipleVictims")}
+            />
+            Multiple victims may be involved
+          </label>
+
+          <textarea
+            className="input-textarea"
+            placeholder="Optional: add a short note, e.g. Bike slipped near the signal, victim is lying near divider."
+            value={report.note}
+            onChange={(e) => updateReport("note", e.target.value)}
+          />
+
+          <div className="situation-preview">
+            <strong>Report Summary:</strong>
             <p>
-              <strong>Severity:</strong> {reportCreated.severity}
+              {hasAccidentDetails()
+                ? getBystanderSituationSummary()
+                : "Enter vehicle number, select a condition, or write a short note before submitting report."}
             </p>
-
-            <p>
-              <strong>Case ID:</strong> {reportCreated.id}
-            </p>
-
-            <p>
-              <strong>Summary:</strong> {reportCreated.situationSummary}
-            </p>
-
-            <a
-              href={reportCreated.mapsLink}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Open Accident Location
-            </a>
           </div>
-        )}
+
+          <div className="severity-box">
+            Current Severity: <strong>{calculateSeverity()}</strong>
+          </div>
+        </div>
+
+        <div className="card send-sos-card">
+          <h2>Step 4: Submit Accident Report</h2>
+
+          <p className="muted-text">
+            This will create a bystander report in the responder dashboard.
+            Admin can verify the case and search the registered user database
+            using the vehicle number.
+          </p>
+
+          <div className="confidence-preview">
+            <strong>Estimated Report Confidence:</strong>{" "}
+            {calculateConfidenceScore()} / 100 —{" "}
+            {getConfidenceLevel(calculateConfidenceScore())}
+          </div>
+
+          <button
+            className="sos-btn"
+            onClick={submitBystanderReport}
+            disabled={submitting}
+          >
+            {submitting ? "Submitting Report..." : "SUBMIT ACCIDENT REPORT"}
+          </button>
+
+          {reportCreated && (
+            <div className="alert-box">
+              <h3>Report Submitted</h3>
+
+              <p>
+                <strong>Severity:</strong> {reportCreated.severity}
+              </p>
+
+              <p>
+                <strong>Case ID:</strong> {reportCreated.id}
+              </p>
+
+              <p>
+                <strong>Reporter Type:</strong> {reportCreated.reporterType}
+              </p>
+
+              <p>
+                <strong>Confidence:</strong> {reportCreated.confidenceScore}/100
+                — {reportCreated.confidenceLevel}
+              </p>
+
+              <p>
+                <strong>Summary:</strong> {reportCreated.situationSummary}
+              </p>
+
+              <a
+                href={reportCreated.mapsLink}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open Accident Location
+              </a>
+            </div>
+          )}
+        </div>
+
+        <div className="card">
+          <h2>Accident Location Map</h2>
+
+          <MapView
+            latitude={location?.latitude}
+            longitude={location?.longitude}
+            height="350px"
+          />
+        </div>
+
+        <NearbyServices location={location} />
+      </>
+    );
+  };
+
+  return (
+    <div className="page">
+      <div className="top-bar">
+        <div>
+          <h1>Bystander Accident Report</h1>
+          <p>
+            Report an accident for someone else. Registered reporters are used
+            automatically when a RoadSoS profile is already saved on this device.
+          </p>
+        </div>
+
+        <Link to="/citizen" className="small-link">
+          Citizen Portal
+        </Link>
       </div>
 
-      <div className="card">
-        <h2>Accident Location Map</h2>
-
-        <MapView
-          latitude={location?.latitude}
-          longitude={location?.longitude}
-          height="350px"
-        />
-      </div>
-
-      <NearbyServices location={location} />
+      {bystanderMode === "entry" && renderEntryScreen()}
+      {bystanderMode === "report" && renderReportForm()}
     </div>
   );
 }
