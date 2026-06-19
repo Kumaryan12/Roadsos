@@ -4,16 +4,23 @@ import {
   collection,
   doc,
   getDoc,
-  serverTimestamp
+  getDocs,
+  limit,
+  query,
+  serverTimestamp,
+  where
 } from "firebase/firestore";
 import { Link } from "react-router-dom";
 import { db } from "../firebase";
+import { useAuth } from "../auth/useAuth";
 
 import MapView from "../components/MapView";
 import NearbyServices from "../components/NearbyServices";
 
 function BystanderReport() {
-  const [bystanderMode, setBystanderMode] = useState("entry");
+  const { user: authUser } = useAuth();
+
+  const [bystanderMode, setBystanderMode] = useState("report");
   // entry | report
 
   const [registeredBystander, setRegisteredBystander] = useState(null);
@@ -21,7 +28,7 @@ function BystanderReport() {
   const [loadingProfile, setLoadingProfile] = useState(false);
 
   const [guestBystander, setGuestBystander] = useState({
-    name: "",
+    name: authUser?.displayName || "",
     phone: ""
   });
 
@@ -47,14 +54,6 @@ function BystanderReport() {
   const [submitting, setSubmitting] = useState(false);
   const [reportCreated, setReportCreated] = useState(null);
 
-  useEffect(() => {
-    const savedPhone = localStorage.getItem("roadsos_phone");
-
-    if (savedPhone) {
-      loadRegisteredBystander(savedPhone, true);
-    }
-  }, []);
-
   const normalizeVehicleNumber = (vehicleNumber) => {
     return vehicleNumber.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
   };
@@ -62,6 +61,14 @@ function BystanderReport() {
   const normalizePhoneNumber = (phone) => {
     return phone.replace(/[^0-9]/g, "");
   };
+
+  const getGoogleAccountData = () => ({
+    authUid: authUser?.uid || "",
+    googleEmail: authUser?.email || "",
+    googleDisplayName: authUser?.displayName || "",
+    googlePhotoURL: authUser?.photoURL || "",
+    authProvider: "google.com"
+  });
 
   const loadRegisteredBystander = async (phone, silent = false) => {
     const normalizedPhone = normalizePhoneNumber(phone);
@@ -78,10 +85,18 @@ function BystanderReport() {
       const profileSnap = await getDoc(profileRef);
 
       if (profileSnap.exists()) {
-        const profileData = profileSnap.data();
+        const profileData = {
+          ...profileSnap.data(),
+          ...getGoogleAccountData()
+        };
 
         setRegisteredBystander(profileData);
         localStorage.setItem("roadsos_phone", normalizedPhone);
+
+        if (authUser?.uid) {
+          localStorage.setItem(`roadsos_phone_${authUser.uid}`, normalizedPhone);
+        }
+
         setBystanderMode("report");
 
         if (!silent) {
@@ -100,6 +115,75 @@ function BystanderReport() {
     setLoadingProfile(false);
   };
 
+  const loadRegisteredBystanderByGoogle = async (silent = false) => {
+    if (!authUser?.uid) return;
+
+    setLoadingProfile(true);
+
+    try {
+      const profileQuery = query(
+        collection(db, "registered_users"),
+        where("authUid", "==", authUser.uid),
+        limit(1)
+      );
+      const profileSnap = await getDocs(profileQuery);
+
+      if (!profileSnap.empty) {
+        const profileData = {
+          ...profileSnap.docs[0].data(),
+          ...getGoogleAccountData()
+        };
+
+        setRegisteredBystander(profileData);
+
+        if (profileData.phoneNormalized) {
+          localStorage.setItem("roadsos_phone", profileData.phoneNormalized);
+          localStorage.setItem(
+            `roadsos_phone_${authUser.uid}`,
+            profileData.phoneNormalized
+          );
+        }
+
+        setBystanderMode("report");
+
+        if (!silent) {
+          alert("RoadSoS profile loaded from your Google account.");
+        }
+
+        setLoadingProfile(false);
+        return;
+      }
+
+      const savedPhone = localStorage.getItem(`roadsos_phone_${authUser.uid}`);
+
+      if (savedPhone) {
+        await loadRegisteredBystander(savedPhone, true);
+        return;
+      }
+
+      setGuestBystander((prev) => ({
+        ...prev,
+        name: prev.name || authUser.displayName || ""
+      }));
+      setBystanderMode("report");
+    } catch (error) {
+      console.error(error);
+      alert("Failed to load RoadSoS profile from your Google account.");
+    }
+
+    setLoadingProfile(false);
+  };
+
+  useEffect(() => {
+    if (!authUser?.uid) return;
+
+    const loadTimer = window.setTimeout(() => {
+      loadRegisteredBystanderByGoogle(true);
+    }, 0);
+
+    return () => window.clearTimeout(loadTimer);
+  }, [authUser?.uid]);
+
   const continueAsGuest = () => {
     setRegisteredBystander(null);
     setBystanderMode("report");
@@ -108,10 +192,10 @@ function BystanderReport() {
   const clearBystanderIdentity = () => {
     setRegisteredBystander(null);
     setGuestBystander({
-      name: "",
+      name: authUser?.displayName || "",
       phone: ""
     });
-    setBystanderMode("entry");
+    setBystanderMode("report");
   };
 
   const updateGuestBystander = (field, value) => {
@@ -247,7 +331,8 @@ function BystanderReport() {
     let score = 0;
 
     if (registeredBystander) score += 30;
-    if (!registeredBystander && guestBystander.phone.trim()) score += 15;
+    if (!registeredBystander && authUser) score += 30;
+    if (!registeredBystander && guestBystander.phone.trim()) score += 10;
     if (location) score += 25;
     if (report.vehicleNumber.trim()) score += 25;
     if (Object.values(conditionAnswers).some(Boolean)) score += 20;
@@ -265,6 +350,10 @@ function BystanderReport() {
   const getReporterType = () => {
     if (registeredBystander) return "REGISTERED_ROADSOS_USER";
 
+    if (authUser) {
+      return "GOOGLE_AUTHENTICATED_BYSTANDER";
+    }
+
     if (guestBystander.phone.trim()) {
       return "GUEST_WITH_CONTACT";
     }
@@ -274,6 +363,7 @@ function BystanderReport() {
 
   const getReporterIdentityStatus = () => {
     if (registeredBystander) return "KNOWN";
+    if (authUser) return "KNOWN";
     if (guestBystander.phone.trim()) return "PARTIALLY_KNOWN";
     return "UNKNOWN";
   };
@@ -349,13 +439,27 @@ function BystanderReport() {
               name: registeredBystander.name || "",
               phone: registeredBystander.phone || "",
               phoneNormalized: registeredBystander.phoneNormalized || "",
+              authUid: registeredBystander.authUid || authUser?.uid || "",
+              googleEmail:
+                registeredBystander.googleEmail || authUser?.email || "",
+              googleDisplayName:
+                registeredBystander.googleDisplayName ||
+                authUser?.displayName ||
+                "",
               profileSource: "registered_users"
             }
           : {
-              name: guestBystander.name.trim() || "Anonymous bystander",
+              name:
+                guestBystander.name.trim() ||
+                authUser?.displayName ||
+                "Google-authenticated bystander",
               phone: guestBystander.phone.trim(),
               phoneNormalized: normalizePhoneNumber(guestBystander.phone),
-              profileSource: "guest"
+              authUid: authUser?.uid || "",
+              googleEmail: authUser?.email || "",
+              googleDisplayName: authUser?.displayName || "",
+              googlePhotoURL: authUser?.photoURL || "",
+              profileSource: authUser ? "google_auth" : "guest"
             },
 
         victimIdentityStatus: reportedVehicleNumberNormalized
@@ -391,7 +495,7 @@ function BystanderReport() {
             label: "Bystander Report Created",
             description: registeredBystander
               ? "A registered RoadSoS user submitted a bystander accident report."
-              : "A guest bystander submitted an accident report.",
+              : "A Google-authenticated bystander submitted an accident report.",
             time: new Date().toISOString()
           }
         ],
@@ -508,15 +612,22 @@ function BystanderReport() {
 
     return (
       <div className="card">
-        <h2>Guest Bystander Details</h2>
+        <h2>Google Reporter Identity</h2>
 
         <p className="muted-text">
-          Optional, but useful if responders need to call you back for
-          clarification.
+          This report will be linked to your signed-in Google account. Add a
+          callback phone only if responders may need clarification.
         </p>
 
+        <div className="info-box">
+          <strong>{authUser?.displayName || "RoadSoS Citizen"}</strong>
+          <p className="muted-text" style={{ marginBottom: 0 }}>
+            {authUser?.email || "Google account connected"}
+          </p>
+        </div>
+
         <input
-          placeholder="Your name, optional"
+          placeholder="Your name"
           value={guestBystander.name}
           onChange={(e) => updateGuestBystander("name", e.target.value)}
         />
@@ -528,7 +639,7 @@ function BystanderReport() {
         />
 
         <button className="danger-light-btn" onClick={clearBystanderIdentity}>
-          Go Back
+          Reset Reporter Details
         </button>
       </div>
     );
@@ -540,12 +651,17 @@ function BystanderReport() {
         <div className="bystander-hero-card">
           <span className="bystander-badge">ACCIDENT REPORT</span>
 
-          <h2>Help someone even if you do not know them</h2>
+          <h2>Help someone as a verified Google reporter</h2>
 
           <p>
             If the victim cannot use their phone, your report can help responders
             identify the victim through vehicle number and dispatch help faster.
+            RoadSoS will attach your Google account to the report.
           </p>
+
+          {loadingProfile && (
+            <p className="success-text">Checking for a saved RoadSoS profile...</p>
+          )}
         </div>
 
         {renderReporterIdentityCard()}
@@ -798,8 +914,8 @@ function BystanderReport() {
         <div>
           <h1>Bystander Accident Report</h1>
           <p>
-            Report an accident for someone else. Registered reporters are used
-            automatically when a RoadSoS profile is already saved on this device.
+            Report an accident for someone else. Your Google account is used as
+            reporter identity, and a saved RoadSoS profile is loaded when found.
           </p>
         </div>
 

@@ -9,7 +9,9 @@ function CrashDetector({ user, location, setLocation }) {
   const [sendingAutoSos, setSendingAutoSos] = useState(false);
   const [autoSosCreated, setAutoSosCreated] = useState(null);
   const [lastMagnitude, setLastMagnitude] = useState(null);
-  const [sensorSupported, setSensorSupported] = useState(false);
+  const [sensorSupported] = useState(
+    () => typeof window !== "undefined" && "DeviceMotionEvent" in window
+  );
   const [gettingLocation, setGettingLocation] = useState(false);
 
   const countdownRef = useRef(null);
@@ -21,54 +23,6 @@ function CrashDetector({ user, location, setLocation }) {
   useEffect(() => {
     latestLocationRef.current = location;
   }, [location]);
-
-  useEffect(() => {
-    if ("DeviceMotionEvent" in window) {
-      setSensorSupported(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!monitoring) return;
-
-    const handleMotion = (event) => {
-      const acc = event.accelerationIncludingGravity;
-
-      if (!acc) return;
-
-      const x = acc.x || 0;
-      const y = acc.y || 0;
-      const z = acc.z || 0;
-
-      const magnitude = Math.sqrt(x * x + y * y + z * z);
-      setLastMagnitude(magnitude.toFixed(2));
-
-      if (magnitude > IMPACT_THRESHOLD && !crashActiveRef.current) {
-        triggerCrashAlert();
-      }
-    };
-
-    window.addEventListener("devicemotion", handleMotion);
-
-    return () => {
-      window.removeEventListener("devicemotion", handleMotion);
-    };
-  }, [monitoring]);
-
-  useEffect(() => {
-    if (!crashDetected) return;
-
-    if (countdown <= 0) {
-      sendAutoEscalationSos();
-      return;
-    }
-
-    countdownRef.current = setTimeout(() => {
-      setCountdown((prev) => prev - 1);
-    }, 1000);
-
-    return () => clearTimeout(countdownRef.current);
-  }, [crashDetected, countdown]);
 
   const requestCurrentLocation = () => {
     return new Promise((resolve, reject) => {
@@ -266,6 +220,51 @@ function CrashDetector({ user, location, setLocation }) {
     setSendingAutoSos(false);
   };
 
+  useEffect(() => {
+    if (!monitoring) return;
+
+    const handleMotion = (event) => {
+      const acc = event.accelerationIncludingGravity;
+
+      if (!acc) return;
+
+      const x = acc.x || 0;
+      const y = acc.y || 0;
+      const z = acc.z || 0;
+
+      const magnitude = Math.sqrt(x * x + y * y + z * z);
+      setLastMagnitude(magnitude.toFixed(2));
+
+      if (magnitude > IMPACT_THRESHOLD && !crashActiveRef.current) {
+        triggerCrashAlert();
+      }
+    };
+
+    window.addEventListener("devicemotion", handleMotion);
+
+    return () => {
+      window.removeEventListener("devicemotion", handleMotion);
+    };
+  }, [monitoring]);
+
+  useEffect(() => {
+    if (!crashDetected) return;
+
+    if (countdown <= 0) {
+      const escalationTimer = setTimeout(() => {
+        sendAutoEscalationSos();
+      }, 0);
+
+      return () => clearTimeout(escalationTimer);
+    }
+
+    countdownRef.current = setTimeout(() => {
+      setCountdown((prev) => prev - 1);
+    }, 1000);
+
+    return () => clearTimeout(countdownRef.current);
+  }, [crashDetected, countdown]);
+
   const enableMonitoring = async () => {
     const activeLocation = await ensureLocationReady();
 
@@ -319,7 +318,7 @@ function CrashDetector({ user, location, setLocation }) {
           <strong>
             {gettingLocation
               ? "Getting location..."
-              : latestLocationRef.current
+              : location
               ? "Location ready"
               : "Location needed"}
           </strong>

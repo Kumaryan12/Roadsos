@@ -14,7 +14,7 @@ function NearbyServices({ location }) {
       name: "Nearest Emergency Trauma Centre",
       distance: "1.2 km",
       eta: "5 min",
-      icon: "🏥",
+      icon: "TC",
       phone: "108"
     },
     {
@@ -22,7 +22,7 @@ function NearbyServices({ location }) {
       name: "Rapid Ambulance Support",
       distance: "1.8 km",
       eta: "7 min",
-      icon: "🚑",
+      icon: "AM",
       phone: "108"
     },
     {
@@ -30,7 +30,7 @@ function NearbyServices({ location }) {
       name: "Nearest Traffic Police Unit",
       distance: "2.4 km",
       eta: "9 min",
-      icon: "👮",
+      icon: "TP",
       phone: "100"
     },
     {
@@ -38,7 +38,7 @@ function NearbyServices({ location }) {
       name: "Highway Towing & Rescue",
       distance: "3.1 km",
       eta: "12 min",
-      icon: "🛠️",
+      icon: "VR",
       phone: "1800123456"
     }
   ];

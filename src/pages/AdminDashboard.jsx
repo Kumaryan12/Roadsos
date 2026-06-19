@@ -8,11 +8,13 @@ import {
   updateDoc
 } from "firebase/firestore";
 import { Link } from "react-router-dom";
+import { useAuth } from "../auth/useAuth";
 import { db } from "../firebase";
 
 import SOSCard from "../components/SOSCard";
 
 function AdminDashboard() {
+  const { user, signOut } = useAuth();
   const [cases, setCases] = useState([]);
   const [registeredUsers, setRegisteredUsers] = useState([]);
   const [activeTab, setActiveTab] = useState("cases");
@@ -155,6 +157,11 @@ function AdminDashboard() {
               </div>
 
               <div>
+                <span>Google Account</span>
+                <strong>{user.googleEmail || "Not available"}</strong>
+              </div>
+
+              <div>
                 <span>Age / Gender</span>
                 <strong>
                   {user.age || "?"} / {user.gender || "Not available"}
@@ -225,9 +232,25 @@ function AdminDashboard() {
           </p>
         </div>
 
-        <Link to="/" className="small-link">
-          Home
-        </Link>
+        <div className="admin-account-card">
+          {user?.photoURL && (
+            <img src={user.photoURL} alt="" className="admin-avatar" />
+          )}
+
+          <div>
+            <span>Signed in</span>
+            <strong>{user?.displayName || user?.email}</strong>
+            <small>{user?.email}</small>
+          </div>
+
+          <button className="danger-light-btn" onClick={signOut}>
+            Sign Out
+          </button>
+
+          <Link to="/" className="small-link">
+            Home
+          </Link>
+        </div>
       </div>
 
       <div className="admin-hero-card">
@@ -266,6 +289,11 @@ function AdminDashboard() {
         <div className="stat-card blue">
           <h2>{verifiedCases.length}</h2>
           <p>Verified Cases</p>
+        </div>
+
+        <div className="stat-card blue">
+          <h2>{helpAssignedCases.length}</h2>
+          <p>Help Assigned</p>
         </div>
 
         <div className="stat-card purple">

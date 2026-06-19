@@ -8,6 +8,10 @@ import NearbyServices from "./NearbyServices";
 function SOSCard({ sosCase, onStatusUpdate, onConfirmVictimMatch }) {
   const [matching, setMatching] = useState(false);
   const [matches, setMatches] = useState([]);
+  const [aiBrief, setAiBrief] = useState(null);
+  const [briefSource, setBriefSource] = useState("");
+  const [briefLoading, setBriefLoading] = useState(false);
+  const [briefError, setBriefError] = useState("");
 
   const isBystanderReport = sosCase.triggerType === "BYSTANDER_REPORT";
   const isManualVictimSos = sosCase.triggerType === "MANUAL_VICTIM_SOS";
@@ -153,6 +157,133 @@ const getMatchClass = (score) => {
   return "low-confidence";
 };
 
+  const generateCaseBrief = async () => {
+    setBriefLoading(true);
+    setBriefError("");
+
+    try {
+      const response = await fetch("/api/case-brief", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ sosCase })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Unable to generate AI case brief.");
+      }
+
+      setAiBrief(data.brief);
+      setBriefSource(data.source || "groq");
+    } catch (error) {
+      console.error(error);
+      setBriefError(error.message);
+    }
+
+    setBriefLoading(false);
+  };
+
+  const renderAiBrief = () => {
+    return (
+      <div className="ai-brief-box">
+        <div className="ai-brief-header">
+          <div>
+            <span className="ai-badge">AI ASSIST</span>
+            <h3>Responder Case Brief</h3>
+            <p>
+              Generated from the current case data using Groq when configured,
+              with a rule-based fallback. Use as support, not dispatch authority.
+            </p>
+          </div>
+
+          <button
+            className="secondary-btn"
+            onClick={generateCaseBrief}
+            disabled={briefLoading}
+          >
+            {briefLoading
+              ? "Generating..."
+              : aiBrief
+              ? "Regenerate Brief"
+              : "Generate AI Brief"}
+          </button>
+        </div>
+
+        {briefError && <p className="ai-brief-error">{briefError}</p>}
+
+        {aiBrief && (
+          <div className="ai-brief-content">
+            {briefSource && (
+              <div className="ai-source-line">
+                Source: {briefSource === "groq" ? "Groq LLM" : "RoadSoS fallback"}
+              </div>
+            )}
+
+            <div className="ai-brief-section ai-brief-summary">
+              <h4>3-Line Summary</h4>
+              <ol>
+                {aiBrief.summary?.map((item, index) => (
+                  <li key={index}>{item}</li>
+                ))}
+              </ol>
+            </div>
+
+            <div className="ai-brief-section">
+              <h4>Severity Rationale</h4>
+              <p>{aiBrief.severityRationale}</p>
+            </div>
+
+            <div className="ai-brief-grid">
+              <div className="ai-brief-section">
+                <h4>Immediate Checklist</h4>
+                <ul>
+                  {aiBrief.immediateChecklist?.map((item, index) => (
+                    <li key={index}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="ai-brief-section">
+                <h4>Verify Next</h4>
+                <ul>
+                  {aiBrief.verificationQuestions?.map((item, index) => (
+                    <li key={index}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
+            {aiBrief.riskFlags?.length > 0 && (
+              <div className="ai-brief-section">
+                <h4>Risk Flags</h4>
+                <div className="ai-risk-flags">
+                  {aiBrief.riskFlags.map((item, index) => (
+                    <span key={index}>{item}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="ai-brief-grid">
+              <div className="ai-brief-section">
+                <h4>Dispatch Draft</h4>
+                <p>{aiBrief.dispatchMessage}</p>
+              </div>
+
+              <div className="ai-brief-section">
+                <h4>Contact Draft</h4>
+                <p>{aiBrief.contactMessage}</p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const findVictimByVehicle = async () => {
   if (!sosCase.reportedVehicleNumberNormalized) {
     alert("No vehicle number was provided in this bystander report.");
@@ -265,6 +396,11 @@ const getMatchClass = (score) => {
           </div>
 
           <div>
+            <span>Reporter Google Account</span>
+            <strong>{bystander.googleEmail || "Not available"}</strong>
+          </div>
+
+          <div>
             <span>Reporter Profile Source</span>
             <strong>{bystander.profileSource || "Not available"}</strong>
           </div>
@@ -298,6 +434,11 @@ const getMatchClass = (score) => {
             <div>
               <span>RoadSoS ID</span>
               <strong>{sosCase.user.roadSosId || "Not available"}</strong>
+            </div>
+
+            <div>
+              <span>Google Account</span>
+              <strong>{sosCase.user.googleEmail || "Not available"}</strong>
             </div>
 
             <div>
@@ -451,6 +592,8 @@ const getMatchClass = (score) => {
         </div>
       </div>
 
+      {renderAiBrief()}
+
       {isAutoCrashCase && (
   <div className="auto-crash-box">
     <div className="auto-crash-header">
@@ -570,7 +713,12 @@ const getMatchClass = (score) => {
               {matches.map((victim) => (
                 <div className="match-card" key={victim.id}>
                   <div>
-                    <h4>{victim.name}</h4>
+                    <div className="match-header-row">
+                      <h4>{victim.name}</h4>
+                      <span className={`confidence-chip ${getMatchClass(victim.matchScore)}`}>
+                        {victim.matchScore}% match
+                      </span>
+                    </div>
 
                     <p>
                       {victim.bloodGroup} • {victim.gender} • Age {victim.age}
@@ -594,6 +742,14 @@ const getMatchClass = (score) => {
                           : "Not provided"}
                       </strong>
                     </p>
+
+                    {victim.matchReasons?.length > 0 && (
+                      <div className="match-reasons">
+                        {victim.matchReasons.map((reason, index) => (
+                          <span key={index}>{reason}</span>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="match-actions">

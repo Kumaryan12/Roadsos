@@ -4,19 +4,30 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
+  limit,
+  query,
   serverTimestamp,
-  setDoc
+  setDoc,
+  where
 } from "firebase/firestore";
 import { Link } from "react-router-dom";
 import { db } from "../firebase";
+import { useAuth } from "../auth/useAuth";
 
 import MapView from "../components/MapView";
 import NearbyServices from "../components/NearbyServices";
 import CrashDetector from "../components/CrashDetector";
 function PersonalSafety() {
+  const { user: authUser } = useAuth();
+
   const emptyUser = {
-    name: "",
+    name: authUser?.displayName || "",
     phone: "",
+    authUid: authUser?.uid || "",
+    googleEmail: authUser?.email || "",
+    googleDisplayName: authUser?.displayName || "",
+    googlePhotoURL: authUser?.photoURL || "",
     age: "",
     gender: "",
     emergencyContact: "",
@@ -60,14 +71,6 @@ function PersonalSafety() {
   const [sendingSos, setSendingSos] = useState(false);
   const [sosCreated, setSosCreated] = useState(null);
 
-  useEffect(() => {
-    const savedPhone = localStorage.getItem("roadsos_phone");
-
-    if (savedPhone) {
-      loadSavedProfile(savedPhone, true);
-    }
-  }, []);
-
   const normalizeVehicleNumber = (vehicleNumber) => {
     return vehicleNumber.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
   };
@@ -81,6 +84,15 @@ function PersonalSafety() {
     const lastFour = cleanPhone.slice(-4) || "0000";
     return `RS-${lastFour}`;
   };
+
+  const getGoogleAccountData = () => ({
+    authUid: authUser?.uid || user.authUid || "",
+    googleEmail: authUser?.email || user.googleEmail || "",
+    googleDisplayName:
+      authUser?.displayName || user.googleDisplayName || user.name || "",
+    googlePhotoURL: authUser?.photoURL || user.googlePhotoURL || "",
+    authProvider: "google.com"
+  });
 
   const getCleanedVehicles = () => {
     return user.vehicles
@@ -210,6 +222,7 @@ function PersonalSafety() {
 
     return {
       roadSosId: user.roadSosId || generateRoadSosId(user.phone),
+      ...getGoogleAccountData(),
       name: user.name.trim(),
       phone: user.phone.trim(),
       phoneNormalized,
@@ -245,6 +258,13 @@ function PersonalSafety() {
 
       localStorage.setItem("roadsos_phone", profileData.phoneNormalized);
 
+      if (authUser?.uid) {
+        localStorage.setItem(
+          `roadsos_phone_${authUser.uid}`,
+          profileData.phoneNormalized
+        );
+      }
+
       setUser(profileData);
       setProfileSaved(true);
       setProfileMode("emergency");
@@ -273,13 +293,20 @@ function PersonalSafety() {
       const profileSnap = await getDoc(profileRef);
 
       if (profileSnap.exists()) {
-        const profileData = profileSnap.data();
+        const profileData = {
+          ...profileSnap.data(),
+          ...getGoogleAccountData()
+        };
 
         setUser(profileData);
         setProfileSaved(true);
         setProfileMode("emergency");
 
         localStorage.setItem("roadsos_phone", normalizedPhone);
+
+        if (authUser?.uid) {
+          localStorage.setItem(`roadsos_phone_${authUser.uid}`, normalizedPhone);
+        }
 
         if (!silent) {
           alert("Profile loaded successfully. Emergency mode is ready.");
@@ -299,6 +326,77 @@ function PersonalSafety() {
 
     setLoadingProfile(false);
   };
+
+  const loadSavedProfileByGoogle = async (silent = false) => {
+    if (!authUser?.uid) return;
+
+    setLoadingProfile(true);
+
+    try {
+      const profileQuery = query(
+        collection(db, "registered_users"),
+        where("authUid", "==", authUser.uid),
+        limit(1)
+      );
+      const profileSnap = await getDocs(profileQuery);
+
+      if (!profileSnap.empty) {
+        const profileData = {
+          ...profileSnap.docs[0].data(),
+          ...getGoogleAccountData()
+        };
+
+        setUser(profileData);
+        setProfileSaved(true);
+        setProfileMode("emergency");
+
+        if (profileData.phoneNormalized) {
+          localStorage.setItem("roadsos_phone", profileData.phoneNormalized);
+          localStorage.setItem(
+            `roadsos_phone_${authUser.uid}`,
+            profileData.phoneNormalized
+          );
+        }
+
+        if (!silent) {
+          alert("Profile loaded from your Google account. Emergency mode is ready.");
+        }
+
+        setLoadingProfile(false);
+        return;
+      }
+
+      const savedPhone = localStorage.getItem(`roadsos_phone_${authUser.uid}`);
+
+      if (savedPhone) {
+        await loadSavedProfile(savedPhone, true);
+        return;
+      }
+
+      setUser((prev) => ({
+        ...prev,
+        ...getGoogleAccountData(),
+        name: prev.name || authUser.displayName || ""
+      }));
+      setProfileSaved(false);
+      setProfileMode("entry");
+    } catch (error) {
+      console.error(error);
+      alert("Failed to load profile from your Google account.");
+    }
+
+    setLoadingProfile(false);
+  };
+
+  useEffect(() => {
+    if (!authUser?.uid) return;
+
+    const loadTimer = window.setTimeout(() => {
+      loadSavedProfileByGoogle(true);
+    }, 0);
+
+    return () => window.clearTimeout(loadTimer);
+  }, [authUser?.uid]);
 
   const getLocation = () => {
     if (!navigator.geolocation) {
@@ -483,6 +581,11 @@ function PersonalSafety() {
 
   const clearSavedProfile = () => {
     localStorage.removeItem("roadsos_phone");
+
+    if (authUser?.uid) {
+      localStorage.removeItem(`roadsos_phone_${authUser.uid}`);
+    }
+
     setUser(emptyUser);
     setProfileSaved(false);
     setProfileMode("entry");
@@ -575,6 +678,15 @@ function PersonalSafety() {
           This profile stays hidden during emergency use and is sent in the
           background only when SOS is raised.
         </p>
+
+        <div className="info-box">
+          <strong>Google account:</strong>{" "}
+          {authUser?.email || user.googleEmail || "Not connected"}
+          <p className="muted-text" style={{ marginBottom: 0 }}>
+            Your phone number is still required for emergency contact and
+            responder callbacks.
+          </p>
+        </div>
 
         <input
           placeholder="Full Name"
@@ -780,6 +892,11 @@ function PersonalSafety() {
             <div>
               <span>Registered Vehicles</span>
               <strong>{user.vehicles?.length || 0}</strong>
+            </div>
+
+            <div>
+              <span>Google Account</span>
+              <strong>{user.googleEmail || authUser?.email || "Connected"}</strong>
             </div>
 
             <div>

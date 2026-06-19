@@ -20,7 +20,7 @@ function Home() {
 
         <div className="two-layer-grid">
           <Link to="/citizen" className="layer-card citizen-layer">
-            <div className="layer-icon">👥</div>
+            <div className="layer-icon">CT</div>
 
             <h2>Citizen Portal</h2>
 
@@ -37,7 +37,7 @@ function Home() {
           </Link>
 
           <Link to="/admin" className="layer-card admin-layer">
-            <div className="layer-icon">📡</div>
+            <div className="layer-icon">AD</div>
 
             <h2>Admin / Responder Portal</h2>
 
@@ -55,11 +55,11 @@ function Home() {
         </div>
 
         <div className="feature-strip">
-          <span>📍 GPS SOS</span>
-          <span>🚗 Vehicle Matching</span>
-          <span>🏥 Nearby Hospitals</span>
-          <span>👨‍👩‍👧 Emergency Contacts</span>
-          <span>📊 Live Case Tracking</span>
+          <span>GPS SOS</span>
+          <span>Vehicle Matching</span>
+          <span>Nearby Hospitals</span>
+          <span>Emergency Contacts</span>
+          <span>Live Case Tracking</span>
         </div>
       </div>
     </div>
